@@ -1,6 +1,7 @@
-use regex_syntax::hir::{HirKind as ReExpKind, Hir as ReExp, Class as ReClass, Literal as ReLiteral, RepetitionKind};
+use regex_syntax::hir::{HirKind as ReExpKind, Hir as ReExp, Class as ReClass};
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::str::{from_utf8};
 
 pub struct ReMultiMapValues<'a, K, V> {
   x:    Option<V>,
@@ -72,33 +73,24 @@ impl<K: Copy + Ord, V: Copy + Ord> ReMultiMap<K, V> {
 
 pub struct ReTrie<T> {
   inner:    ReInnerTrie,
-  postfuns: Vec<Box<dyn Fn(&str) -> T>>,
-  //ctrl_fun: Option<Box<dyn Fn(char) -> T>>,
+  map_funs: Vec<Box<dyn Fn(&str) -> T>>,
 }
 
 impl<T> Default for ReTrie<T> {
   fn default() -> ReTrie<T> {
     ReTrie{
       inner:    ReInnerTrie::default(),
-      postfuns: Vec::new(),
-      //ctrl_fun: None,
+      map_funs: Vec::new(),
     }
   }
 }
 
 impl<T> ReTrie<T> {
-  /*pub fn reset_control_fallback<F: 'static + Fn(char) -> T>(&mut self, fun: F) {
-    self.ctrl_fun = Some(Box::new(fun));
-  }
-
-  pub fn unset_control_fallback(&mut self) {
-    self.ctrl_fun = None;
-  }*/
-
-  pub fn push<F: 'static + Fn(&str) -> T>(&mut self, rexp: ReExp, postfun: F) {
-    let ridx = self.postfuns.len();
+  pub fn push<F: 'static + Fn(&str) -> T>(&mut self, rexp: ReExp, map_fun: F) {
+    let ridx = self.map_funs.len();
     match rexp.kind() {
       &ReExpKind::Concat(ref rexps) => {
+        //println!("DEBUG: re: push: Concat: ridx={} rexps.len={}", ridx, rexps.len());
         assert!(!rexps.is_empty());
         let (rexp, rexps) = rexps.split_first().unwrap();
         self.inner._push(rexp, rexps, ridx);
@@ -114,13 +106,13 @@ impl<T> ReTrie<T> {
       }
       _ => unimplemented!()
     }
-    self.postfuns.push(Box::new(postfun));
+    self.map_funs.push(Box::new(map_fun));
   }
 
   pub fn split_match<'t>(&self, text: &'t str) -> Option<(T, &'t str)> {
     let (mat_len, ridx) = self.inner._match(text, None, /*0*/)?;
     let (tok, rem) = text.split_at(mat_len);
-    Some((self.postfuns[ridx](tok), rem))
+    Some((self.map_funs[ridx](tok), rem))
   }
 
   pub fn match_at<'t>(&self, text: &'t str, pos: usize) -> Option<(T, usize)> {
@@ -128,16 +120,11 @@ impl<T> ReTrie<T> {
       None => panic!("bug"),
       Some(s) => s
     };
+    //println!("TRACE: re: match_at: pos={} search={}", pos, search);
     let (mat_len, ridx) = self.inner._match(search, None, /*0*/)?;
-    /*if mat.is_none() {
-      if let Some(ref ctrl_fun) = self.ctrl_fun.as_ref() {
-        if c.is_control() {
-          return Some(((ctrl_fun)(c), next_pos));
-        }
-      }
-    }*/
+    //println!("TRACE: re: match_at:   ridx={} mat.len={}", ridx, mat_len);
     let (tok, _) = search.split_at(mat_len);
-    Some((self.postfuns[ridx](tok), pos + mat_len))
+    Some((self.map_funs[ridx](tok), pos + mat_len))
   }
 }
 
@@ -174,14 +161,34 @@ impl ReInnerTrie {
     }
     match rexp.kind() {
       &ReExpKind::Literal(ref re_lit) => {
-        let c = match re_lit {
+        /*let c = match re_lit {
           &ReLiteral::Unicode(c) => c,
           &ReLiteral::Byte(x) => if x.is_ascii() {
             char::from(x)
           } else {
             panic!("bug: re: non-ascii u8 to char: {:x}", x)
           }
+        };*/
+        let lit_str = from_utf8(&*(re_lit.0)).unwrap();
+        /*if ridx < 3 {
+          println!("DEBUG: re: _push: Literal: ridx={} rexps.len={}", ridx, rexps.len());
+        } else {
+          println!("DEBUG: re: _push: Literal: ridx={} rexps.len={} str={}", ridx, rexps.len(), lit_str);
+        }*/
+        let mut lit_chars = lit_str.chars();
+        let c = match lit_chars.next() {
+          None => panic!("bug"),
+          Some(c) => c
         };
+        //println!("DEBUG: re: _push: Literal:   first c={}", c);
+        let mut new_rexps: Vec<ReExp> = Vec::new();
+        for next_c in lit_chars {
+          //println!("DEBUG: re: _push: Literal:   next c={}", next_c);
+          let buf: Vec<u8> = format!("{}", next_c).into();
+          new_rexps.push(ReExp::literal(buf.into_boxed_slice()));
+        }
+        new_rexps.extend_from_slice(rexps);
+        let rexps = new_rexps;
         if rexps.is_empty() {
           self.lit_term.insert(c, ridx);
         } else {
@@ -193,6 +200,7 @@ impl ReInnerTrie {
         }
       }
       &ReExpKind::Class(ref re_klass) => {
+        //println!("DEBUG: re: _push: Class: ridx={}", ridx);
         match re_klass {
           &ReClass::Unicode(ref klass) => {
             let eidx = self.non_lit.len();
@@ -221,14 +229,21 @@ impl ReInnerTrie {
         }
       }
       &ReExpKind::Repetition(ref re_rep) => {
+        //println!("DEBUG: re: _push: Repetition: ridx={}", ridx);
         assert!(re_rep.greedy);
-        let (zero, unbound) = match &re_rep.kind {
+        /*let (zero, unbound) = match &re_rep.kind {
           &RepetitionKind::ZeroOrOne => (true, false),
           &RepetitionKind::ZeroOrMore => (true, true),
           &RepetitionKind::OneOrMore => (false, true),
           _ => unimplemented!()
+        };*/
+        let (zero, unbound) = match (re_rep.min, re_rep.max) {
+          (0, Some(1)) => (true, false),
+          (0, None) => (true, true),
+          (1, None) => (false, true),
+          _ => unimplemented!()
         };
-        match re_rep.hir.kind() {
+        match re_rep.sub.kind() {
           &ReExpKind::Literal(ref re_lit) => {
             let eidx = self.non_lit.len();
             if zero {
@@ -237,9 +252,20 @@ impl ReInnerTrie {
               //self.repeat1.insert(eidx);
             }
             let mut ranges = Vec::new();
-            let c = match re_lit {
+            /*let c = match re_lit {
               &ReLiteral::Unicode(c) => c,
               _ => unimplemented!()
+            };*/
+            // FIXME FIXME
+            let c = if (re_lit.0).len() == 1 {
+              let x = (re_lit.0)[0];
+              if x.is_ascii() {
+                char::from(x)
+              } else {
+                panic!("bug: re: non-ascii u8 to char: {:x}", x)
+              }
+            } else {
+              unimplemented!();
             };
             if unbound {
               self.unbound.insert((c, c), eidx);
@@ -304,6 +330,7 @@ impl ReInnerTrie {
   }
 
   fn _match(&self, text: &str, ctx: Option<usize>, /*depth: i32*/) -> Option<(usize, usize)> {
+    //println!("TRACE: re: _match: ctx={:?} idx={:?} text={}", ctx, self.index, text);
     match (ctx, self.index) {
       (Some(ctx), Some(idx)) => if ctx != idx {
         //println!("TRACE: re: ctx: {:?} depth: {}, idx: {:?} mismatch", ctx, depth, self.index);

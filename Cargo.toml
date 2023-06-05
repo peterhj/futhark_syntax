@@ -2,6 +2,8 @@
 name = "futhark_syntax"
 version = "0.1.0-devel"
 edition = "2018"
+license = "ISC"
 
 [dependencies]
-regex_syntax = { path = "../regex_syntax" }
+regex_syntax = { path = "../regex/regex-syntax" }
+smol_str = { path = "../smol_str" }

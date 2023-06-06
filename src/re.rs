@@ -1,3 +1,4 @@
+use regex_syntax::{Parser as ReParser};
 use regex_syntax::hir::{HirKind as ReExpKind, Hir as ReExp, Class as ReClass};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -86,7 +87,13 @@ impl<T> Default for ReTrie<T> {
 }
 
 impl<T> ReTrie<T> {
-  pub fn push<F: 'static + Fn(&str) -> T>(&mut self, rexp: ReExp, map_fun: F) {
+  //pub fn push<F: 'static + Fn(&str) -> T>(&mut self, rexp: ReExp, map_fun: F) {}
+  //pub fn push<'s, F: 'static + Fn(&str) -> T>(&mut self, rexp: (&'s str, ReExp), map_fun: F) {}
+  pub fn push<'s, F: 'static + Fn(&str) -> T>(&mut self, rstr: &'s str, map_fun: F) {
+    let rexp = match ReParser::new().parse(rstr) {
+      Err(_) => panic!("bug: ReTrie::push: regexp parse failure: '{}'", rstr),
+      Ok(rexp) => rexp
+    };
     let ridx = self.map_funs.len();
     match rexp.kind() {
       &ReExpKind::Concat(ref rexps) => {
@@ -104,7 +111,7 @@ impl<T> ReTrie<T> {
       &ReExpKind::Repetition(_) => {
         self.inner._push(&rexp, &[], ridx);
       }
-      _ => unimplemented!()
+      _ => panic!("bug: ReTrie::push: unimplemented: '{}' {:?}", rstr, rexp.kind())
     }
     self.map_funs.push(Box::new(map_fun));
   }

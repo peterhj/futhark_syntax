@@ -12,6 +12,7 @@ use std::iter::{Peekable};
 use std::rc::{Rc};
 
 pub mod re;
+#[cfg(test)] pub mod tests;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
 pub struct Pos {
@@ -371,6 +372,13 @@ pub enum IntType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum PrimType {
+  Float(FloatType),
+  Int(IntType),
+  Bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(u8)]
 pub enum InfixOp {
   Add,
@@ -380,13 +388,22 @@ pub enum InfixOp {
   Rem,
 }
 
+
+pub type TypeExpRef = Rc<TypeExp>;
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum TypeExp {
+  // TODO
+  Prim(PrimType),
+}
+
 pub type ExpRef = Rc<Exp>;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Exp {
   // TODO
-  Lam(Vec<SmolStr>, ExpRef),
-  LamAlt(Vec<SmolStr>, ExpRef),
+  Lam(Vec<SmolStr>, Option<TypeExpRef>, ExpRef),
+  LamAlt(Vec<SmolStr>, Option<TypeExpRef>, ExpRef),
   App(ExpRef, ExpRef),
   InfixApp(SmolStr, ExpRef, ExpRef),
   Add(ExpRef, ExpRef),
@@ -625,7 +642,7 @@ impl<'t, 's> ExpParser<'t, 's> {
           self.next()?;
         }
         let body = self.exp(0)?;
-        Ok(Exp::LamAlt(vars, body.into()))
+        Ok(Exp::LamAlt(vars, None, body.into()))
       }
       Token::Dash => {
         if self.maybe_skip_space()? {
@@ -654,8 +671,8 @@ impl<'t, 's> ExpParser<'t, 's> {
           &Token::Backslash => {
             let (tok, span) = self.current_();
             self.next()?;
-            let (lam_vars, lam_body) = match self.nud(tok, span)? {
-              Exp::LamAlt(vars, body) => (vars, body),
+            let (lam_vars, lam_ret_ty, lam_body) = match self.nud(tok, span)? {
+              Exp::LamAlt(vars, lam_ret_ty, body) => (vars, lam_ret_ty, body),
               _ => return Err((ExpError::Failed(Token::Backslash), span))
             };
             if self.maybe_skip_space()? {
@@ -666,7 +683,7 @@ impl<'t, 's> ExpParser<'t, 's> {
               t => return Err((ExpError::Expected(Token::RParen, t), self.current_span()))
             }
             self.next()?;
-            return Ok(Exp::Lam(lam_vars, lam_body));
+            return Ok(Exp::Lam(lam_vars, lam_ret_ty, lam_body));
           }
           &Token::Dash => {
             // FIXME: special case dash.
@@ -820,7 +837,7 @@ impl<'t, 's> ExpParser<'t, 's> {
     }
     self.next()?;
     if self.trace { println!("TRACE: exp:   next tok={:?}", self.current_ref()); }
-    let mut lexp = self.nud(tok_span.0, tok_span.1)?;
+    let lexp = self.nud(tok_span.0, tok_span.1)?;
     if self.trace { println!("TRACE: exp:   lexp={:?} (nud)", lexp); }
     tok_span = self.current_();
     if self.trace { println!("TRACE: exp:   tok={:?} span={:?}", tok_span.0, tok_span.1); }

@@ -4,6 +4,11 @@ version = "0.1.0-devel"
 edition = "2018"
 license = "ISC"
 
+[profile.dev]
+opt-level = 3
+codegen-units = 1
+incremental = false
+
 [dependencies]
 regex_syntax = { path = "../regex/regex-syntax" }
 smol_str = { path = "../smol_str" }

@@ -70,7 +70,7 @@ pub enum IntLitKind {
   Hex,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Token {
   //NL,
   //CRNL,
@@ -117,6 +117,7 @@ pub enum Token {
   LRBrack,
   LBrack,
   RBrack,
+  LRCurly,
   LCurly,
   RCurly,
   Def,
@@ -243,6 +244,7 @@ pub fn tokenizer_trie() -> ReTrie<Token> {
   tr.push(_re(r"\[\]"),   |_| Token::LRBrack);
   tr.push(_re(r"\["),     |_| Token::LBrack);
   tr.push(_re(r"\]"),     |_| Token::RBrack);
+  tr.push(_re(r"\{\}"),   |_| Token::LRCurly);
   tr.push(_re(r"\{"),     |_| Token::LCurly);
   tr.push(_re(r"\}"),     |_| Token::RCurly);
   tr.push(_re(r"def"),    |_| Token::Def);
@@ -335,7 +337,7 @@ impl<'t, 's> Iterator for Tokenizer<'t, 's> {
   }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ExpError {
   // TODO
   Eof,
@@ -347,6 +349,15 @@ pub enum ExpError {
   ExpectedIdent(Token),
   Expected(Token, Token),
   ExpectedAny(Vec<Token>, Token),
+}
+
+impl ExpError {
+  pub fn is_eof(&self) -> bool {
+    match self {
+      &ExpError::Eof => true,
+      _ => false
+    }
+  }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -378,16 +389,21 @@ pub enum PrimType {
   Bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[repr(u8)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum InfixOp {
   Add,
   Sub,
   Mul,
   Div,
   Rem,
+  Id(SmolStr),
 }
 
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum PrefixOp {
+  Neg,
+  BNeg,
+}
 
 pub type TypeExpRef = Rc<TypeExp>;
 
@@ -402,10 +418,12 @@ pub type ExpRef = Rc<Exp>;
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Exp {
   // TODO
-  Lam(Vec<SmolStr>, Option<TypeExpRef>, ExpRef),
-  LamAlt(Vec<SmolStr>, Option<TypeExpRef>, ExpRef),
+  Lam(Vec<SmolStr>, ExpRef),
+  LamAlt(Vec<SmolStr>, ExpRef),
+  //LamTy(Vec<SmolStr>, Option<TypeExpRef>, ExpRef),
+  //LamAltTy(Vec<SmolStr>, Option<TypeExpRef>, ExpRef),
   App(ExpRef, ExpRef),
-  InfixApp(SmolStr, ExpRef, ExpRef),
+  InfixApp(InfixOp, ExpRef, ExpRef),
   Add(ExpRef, ExpRef),
   Sub(ExpRef, ExpRef),
   Mul(ExpRef, ExpRef),
@@ -418,6 +436,7 @@ pub enum Exp {
   FloatLit(SmolStr, FloatLitKind, Option<FloatType>),
   IntLit(SmolStr, IntLitKind, Option<IntType>),
   InfixOp(InfixOp),
+  PrefixOp(PrefixOp),
   Id(SmolStr),
 }
 
@@ -556,40 +575,64 @@ impl<'t, 's> ExpParser<'t, 's> {
     }
   }
 
-  pub fn led(&mut self, lexp: Exp, tok: Token, span: Span, prespace: bool) -> Result<Exp, (ExpError, Span)> {
+  pub fn led(&mut self, lexp: Exp, tok: Token, span: Span, /*prespace: bool*/) -> Result<Exp, (ExpError, Span)> {
     let lbp = self.lbp(&tok);
     match tok {
+      Token::LRParen |
+      Token::LParen |
+      Token::RParen |
+      Token::LRBrack |
+      Token::RBrack |
+      Token::LRCurly |
+      Token::LCurly |
+      Token::RCurly => {
+        Err((ExpError::Unexpected(tok), span))
+      }
       // TODO TODO
       Token::Plus => {
+        if self.maybe_skip_space()? {
+          self.next()?;
+        }
         let rexp = self.exp(lbp)?;
         Ok(Exp::Add(lexp.into(), rexp.into()))
       }
       Token::Dash => {
+        if self.maybe_skip_space()? {
+          self.next()?;
+        }
         let rexp = self.exp(lbp)?;
         Ok(Exp::Sub(lexp.into(), rexp.into()))
       }
       Token::Star => {
+        if self.maybe_skip_space()? {
+          self.next()?;
+        }
         let rexp = self.exp(lbp)?;
         Ok(Exp::Mul(lexp.into(), rexp.into()))
       }
       Token::Slash => {
+        if self.maybe_skip_space()? {
+          self.next()?;
+        }
         let rexp = self.exp(lbp)?;
         Ok(Exp::Div(lexp.into(), rexp.into()))
       }
       Token::Percent => {
+        if self.maybe_skip_space()? {
+          self.next()?;
+        }
         let rexp = self.exp(lbp)?;
         Ok(Exp::Rem(lexp.into(), rexp.into()))
       }
       Token::LBrack => {
-        if prespace {
-          let arg = self.nud(tok, span)?;
-          return Ok(Exp::App(lexp.into(), arg.into()));
-        }
         unimplemented!();
       }
       Token::InfixIdent(name) => {
+        if self.maybe_skip_space()? {
+          self.next()?;
+        }
         let rexp = self.exp(lbp)?;
-        Ok(Exp::InfixApp(name, lexp.into(), rexp.into()))
+        Ok(Exp::InfixApp(InfixOp::Id(name), lexp.into(), rexp.into()))
       }
       _ => panic!("bug: led: unimplemented: lexp={:?} tok={:?} span={:?}", lexp, tok, span)
     }
@@ -606,7 +649,9 @@ impl<'t, 's> ExpParser<'t, 's> {
       Token::Slash |
       Token::Percent |
       Token::InfixIdent(_) |
-      Token::RParen => {
+      Token::RParen |
+      Token::RBrack |
+      Token::RCurly => {
         Err((ExpError::Unexpected(tok), span))
       }
       // TODO TODO
@@ -642,7 +687,7 @@ impl<'t, 's> ExpParser<'t, 's> {
           self.next()?;
         }
         let body = self.exp(0)?;
-        Ok(Exp::LamAlt(vars, None, body.into()))
+        Ok(Exp::LamAlt(vars, body.into()))
       }
       Token::Dash => {
         if self.maybe_skip_space()? {
@@ -671,8 +716,8 @@ impl<'t, 's> ExpParser<'t, 's> {
           &Token::Backslash => {
             let (tok, span) = self.current_();
             self.next()?;
-            let (lam_vars, lam_ret_ty, lam_body) = match self.nud(tok, span)? {
-              Exp::LamAlt(vars, lam_ret_ty, body) => (vars, lam_ret_ty, body),
+            let (lam_vars, lam_body) = match self.nud(tok, span)? {
+              Exp::LamAlt(vars, body) => (vars, body),
               _ => return Err((ExpError::Failed(Token::Backslash), span))
             };
             if self.maybe_skip_space()? {
@@ -683,11 +728,42 @@ impl<'t, 's> ExpParser<'t, 's> {
               t => return Err((ExpError::Expected(Token::RParen, t), self.current_span()))
             }
             self.next()?;
-            return Ok(Exp::Lam(lam_vars, lam_ret_ty, lam_body));
+            return Ok(Exp::Lam(lam_vars, lam_body));
           }
           &Token::Dash => {
-            // FIXME: special case dash.
-            unimplemented!();
+            let (tok, span) = self.current_();
+            self.next()?;
+            // FIXME
+            let (prespace, next_tok_span) = if self.maybe_skip_space()? {
+              (true, self.peek_next_())
+            } else {
+              (false, self.current_())
+            };
+            match &next_tok_span.0 {
+              Token::RParen => {
+                if prespace {
+                  self.next()?;
+                }
+                self.next()?;
+                // FIXME
+                return Ok(Exp::InfixOp(InfixOp::Sub));
+                //return Ok(Exp::PrefixOp(PrefixOp::Neg));
+              }
+              _ => {}
+            }
+            let neg_inner = match self.nud(tok, span)? {
+              Exp::Neg(inner) => inner,
+              _ => return Err((ExpError::Failed(Token::Dash), span))
+            };
+            if self.maybe_skip_space()? {
+              self.next()?;
+            }
+            match self.current() {
+              Token::RParen => {}
+              t => return Err((ExpError::Expected(Token::RParen, t), self.current_span()))
+            }
+            self.next()?;
+            return Ok(Exp::Neg(neg_inner));
           }
           &Token::Plus |
           &Token::Star |
@@ -699,15 +775,15 @@ impl<'t, 's> ExpParser<'t, 's> {
               Token::Star => Exp::InfixOp(InfixOp::Mul),
               Token::Slash => Exp::InfixOp(InfixOp::Div),
               Token::Percent => Exp::InfixOp(InfixOp::Rem),
-              Token::InfixIdent(name) => Exp::Id(name),
+              Token::InfixIdent(name) => Exp::InfixOp(InfixOp::Id(name)),
               _ => unreachable!()
             };
             if self.trace { println!("TRACE: nud: LParen:   lexp={:?}", lexp); }
             self.next()?;
             let (tok, span) = self.current_();
             if self.trace { println!("TRACE: nud: LParen:   tok={:?} span={:?}", tok, span); }
-            let inner = self.exp_rec_(lexp, (tok, span), 9999, false)?;
-            if self.trace { println!("TRACE: nud: LParen:   return {:?}", inner); }
+            let lexp = self.exp_rec_(lexp, (tok, span), 9999, /*false*/)?;
+            if self.trace { println!("TRACE: nud: LParen:   return {:?}", lexp); }
             if self.maybe_skip_space()? {
               self.next()?;
             }
@@ -716,7 +792,7 @@ impl<'t, 's> ExpParser<'t, 's> {
               t => return Err((ExpError::Expected(Token::RParen, t), self.current_span()))
             }
             self.next()?;
-            return Ok(inner);
+            return Ok(lexp);
           }
           _ => {}
         }
@@ -730,6 +806,12 @@ impl<'t, 's> ExpParser<'t, 's> {
         }
         self.next()?;
         return Ok(inner);
+      }
+      Token::LBrack => {
+        unimplemented!();
+      }
+      Token::LCurly => {
+        unimplemented!();
       }
       Token::Let => {
         self.skip_space()?;
@@ -821,7 +903,7 @@ impl<'t, 's> ExpParser<'t, 's> {
     self.exp_(rbp, false)
   }
 
-  pub fn exp_(&mut self, rbp: i16, rec: bool) -> Result<Exp, (ExpError, Span)> {
+  pub fn exp_(&mut self, rbp: i16, only_nud: bool) -> Result<Exp, (ExpError, Span)> {
     //if self.trace { self.depth += 1; }
     let mut tok_span = self.current_();
     if self.trace { println!("TRACE: exp: tok={:?} span={:?} rbp={}", tok_span.0, tok_span.1, rbp); }
@@ -853,73 +935,99 @@ impl<'t, 's> ExpParser<'t, 's> {
         return Ok(lexp);
       }
     }*/
-    self.exp_rec_(lexp, tok_span, rbp, rec)
+    if !only_nud {
+      return self.exp_rec_(lexp, tok_span, rbp, /*only_nud*/);
+    }
+    if self.trace { println!("TRACE: exp:   return {:?}", lexp); }
+    Ok(lexp)
   }
 
-  pub fn exp_rec_(&mut self, mut lexp: Exp, mut tok_span: (Token, Span), rbp: i16, rec: bool) -> Result<Exp, (ExpError, Span)> {
+  pub fn exp_rec_(&mut self, mut lexp: Exp, mut tok_span: (Token, Span), rbp: i16, /*non_rec: bool*/) -> Result<Exp, (ExpError, Span)> {
     loop {
       let mut lbp = self.lbp(&tok_span.0);
       if self.trace { println!("TRACE: exp:   tok={:?}", &tok_span.0); }
       if self.trace { println!("TRACE: exp:   lbp={}", lbp); }
       let mut prespace = false;
-      let mut prefix = false;
+      let mut only_led = false;
+      let mut only_rec = false;
       if tok_span.0.is_space() {
-        //self.next()?;
-        //tok_span = self.current_();
         tok_span = self.peek_next_();
         assert!(!tok_span.0.is_space());
-        if tok_span.0.is_eof() {
-          if self.trace { println!("TRACE: exp:   return {:?}", lexp); }
-          return Ok(lexp);
-        }
-        lbp = self.lbp(&tok_span.0);
-        prespace = true;
-        if let &Token::Dash = &tok_span.0 {
-          prefix = true;
-        }
-        if self.trace { println!("TRACE: exp:   tok={:?} (prespace)", &tok_span.0); }
-        if self.trace { println!("TRACE: exp:   lbp={} (prespace)", lbp); }
-        if prefix {
-          if self.trace { println!("TRACE: exp:   prefix (prespace)"); }
-        }
-      }
-      if rbp < lbp {
-        if self.trace { println!("TRACE: exp:   rbp={} < lbp={}", rbp, lbp); }
-        if prespace {
-          self.next()?;
-          if self.trace { println!("TRACE: exp:   next tok={:?} (prespace)", self.current_ref()); }
-        }
-        self.next()?;
-        if self.trace { println!("TRACE: exp:   next tok={:?}", self.current_ref()); }
-        lexp = self.led(lexp, tok_span.0, tok_span.1, prespace)?;
-        if self.trace { println!("TRACE: exp:   lexp={:?} (led)", lexp); }
-        tok_span = self.current_();
         if tok_span.0.is_eof() {
           if self.trace { println!("TRACE: exp:   return {:?}", &lexp); }
           return Ok(lexp);
         }
-      } else if !prefix && !rec {
-        if self.trace { println!("TRACE: exp:   backtrack: enter... rbp={} lbp={}", rbp, lbp); }
+        lbp = self.lbp(&tok_span.0);
+        if self.trace { println!("TRACE: exp:   tok={:?} (prespace)", &tok_span.0); }
+        if self.trace { println!("TRACE: exp:   lbp={} (prespace)", lbp); }
+        prespace = true;
+        if let &Token::LBrack = &tok_span.0 {
+          only_rec = true;
+        }
+      }
+      if let &Token::Dash = &tok_span.0 {
+        only_led = true;
+      }
+      if only_led {
+        if self.trace { println!("TRACE: exp:   only_led"); }
+      }
+      if only_rec {
+        if self.trace { println!("TRACE: exp:   only_rec"); }
+      }
+      let mut mat = false;
+      let mut err_led = None;
+      let mut err_rec = None;
+      let mut fail_led = false;
+      if !only_rec && rbp < lbp {
+        if self.trace { println!("TRACE: exp:   led: rbp={} < lbp={}", rbp, lbp); }
+        let mut parser = self.clone();
+        if prespace {
+          parser.next()?;
+          if self.trace { println!("TRACE: exp:   led: next tok={:?} (prespace)", self.current_ref()); }
+        }
+        parser.next()?;
+        if self.trace { println!("TRACE: exp:   led: next tok={:?}", self.current_ref()); }
+        match parser.led(lexp.clone(), tok_span.0.clone(), tok_span.1, /*prespace*/) {
+          Err(e) => {
+            //if self.trace { println!("TRACE: exp:   led: failed tok={:?} only_led={:?} non_rec={:?}", &tok_span.0, only_led, non_rec); }
+            if self.trace { println!("TRACE: exp:   led: failed tok={:?} only_led={:?}", &tok_span.0, only_led); }
+            err_led = Some(e);
+            fail_led = true;
+          }
+          Ok(led_exp) => {
+            *self = parser;
+            lexp = led_exp;
+            tok_span = self.current_();
+            if self.trace { println!("TRACE: exp:   led: lexp={:?}", &lexp); }
+            if self.trace { println!("TRACE: exp:   led: tok={:?}", &tok_span.0); }
+            if tok_span.0.is_eof() {
+              if self.trace { println!("TRACE: exp:   return {:?}", &lexp); }
+              return Ok(lexp);
+            }
+            mat = true;
+          }
+        }
+      }
+      if !only_led && (fail_led || rbp >= lbp) {
+        if self.trace { println!("TRACE: exp:   backtrack: enter... fail_led={:?} rbp={} lbp={}", fail_led, rbp, lbp); }
         let mut parser = self.clone();
         if self.trace { println!("TRACE: exp:   backtrack: tok={:?}", &tok_span.0); }
         if self.trace { println!("TRACE: exp:   backtrack: prespace?{:?}", prespace); }
         if self.trace { println!("TRACE: exp:   backtrack: cur={:?}", parser.current_ref()); }
-        if self.trace { println!("TRACE: exp:   backtrack: next={:?}", parser.peek_next()); }
-        if prespace/* || parser.current_ref().is_space()*/ {
+        if self.trace { println!("TRACE: exp:   backtrack: peek next={:?}", parser.peek_next()); }
+        if prespace {
           parser.next()?;
           if self.trace { println!("TRACE: exp:   backtrack: next tok={:?} (prespace)", parser.current_ref()); }
         }
-        /*if parser.current_ref().is_space() {
-          parser.next()?;
-          if self.trace { println!("TRACE: exp:   backtrack: next tok={:?} (space)", parser.current_ref()); }
-        }*/
-        // FIXME: following might prefer `exp(rbp)`; think about this.
         match parser.exp_(9999, true) {
-          Ok(arg) => {
+          Err(e) => {
+            err_rec = Some(e);
+            if self.trace { println!("TRACE: exp:   backtrack: failed"); }
+          }
+          Ok(arg_exp) => {
             *self = parser;
-            if self.trace { println!("TRACE: exp:   backtrack: return {:?}", arg); }
-            //return Ok(Exp::App(lexp.into(), arg.into()));
-            lexp = Exp::App(lexp.into(), arg.into());
+            if self.trace { println!("TRACE: exp:   backtrack: return {:?}", &arg_exp); }
+            lexp = Exp::App(lexp.into(), arg_exp.into());
             tok_span = self.current_();
             if self.trace { println!("TRACE: exp:   backtrack: lexp={:?}", &lexp); }
             if self.trace { println!("TRACE: exp:   backtrack: tok={:?}", &tok_span.0); }
@@ -927,13 +1035,27 @@ impl<'t, 's> ExpParser<'t, 's> {
               if self.trace { println!("TRACE: exp:   return {:?}", lexp); }
               return Ok(lexp);
             }
-          }
-          Err(_) => {
-            if self.trace { println!("TRACE: exp:   backtrack: failed"); }
-            break;
+            mat = true;
           }
         }
-      } else {
+      }
+      if !mat {
+        if self.trace { if err_led.is_some() || err_rec.is_some() {
+          println!("TRACE: exp:   no mat and err");
+          if let Some(ref e) = err_led {
+            println!("TRACE: exp:     err led={:?}", e);
+          }
+          if let Some(ref e) = err_rec {
+            println!("TRACE: exp:     err rec={:?}", e);
+          }
+        } }
+        if err_led.as_ref()
+             .map(|&(ref e, _)| e.is_eof())
+             .unwrap_or(false)
+           && err_rec.is_some()
+        {
+          return Err(err_led.unwrap());
+        }
         break;
       }
     }

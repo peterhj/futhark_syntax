@@ -2,6 +2,7 @@
 name = "futhark_syntax"
 version = "0.1.0-devel"
 edition = "2018"
+authors = ["Peter Jin"]
 license = "ISC"
 
 [profile.dev]

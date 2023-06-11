@@ -6,10 +6,11 @@ authors = ["Peter Jin"]
 license = "ISC"
 
 [profile.dev]
-opt-level = 3
+opt-level = 1
+#opt-level = 3
 codegen-units = 1
 incremental = false
 
 [dependencies]
 regex_syntax = { path = "../regex/regex-syntax" }
-smol_str = { path = "../smol_str" }
+smol_str = { path = "../smol_str", default-features = false }

@@ -9,7 +9,7 @@ fn parser<'t>(t: &'t ReTrie<Token>, x: &'static str) -> ExpParser<'t, 'static> {
 }
 
 #[allow(unused_variables)]
-fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, ExpParser<'t, 'static>, Option<Result<Exp, ExpError>>)> {
+fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, ExpParser<'t, 'static>, Option<Result<ExpRef, ExpError>>)> {
   let xys = RefCell::new(Vec::new());
   let x_ = |x: &'static str| {
     xys.borrow_mut().push((false, false, x, parser(&t, x), None));
@@ -17,66 +17,499 @@ fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, E
   let error_x_ = |x: &'static str| {
     xys.borrow_mut().push((false, true, x, parser(&t, x), None));
   };
-  let error_xe = |x: &'static str, e: ExpError| {
-    xys.borrow_mut().push((false, true, x, parser(&t, x), Some(Err(e))));
-  };
   let trace_x_ = |x: &'static str| {
     xys.borrow_mut().push((true, false, x, parser(&t, x), None));
   };
-  let xy = |x: &'static str, y: Exp| {
+  let xe = |x: &'static str, e: ExpError| {
+    xys.borrow_mut().push((false, true, x, parser(&t, x), Some(Err(e))));
+  };
+  let trace_xe = |x: &'static str, e: ExpError| {
+    xys.borrow_mut().push((true, true, x, parser(&t, x), Some(Err(e))));
+  };
+  let xy = |x: &'static str, y: ExpRef| {
     xys.borrow_mut().push((false, false, x, parser(&t, x), Some(Ok(y))));
   };
-  let xe = |x: &'static str, e: ExpError| {
-    xys.borrow_mut().push((false, false, x, parser(&t, x), Some(Err(e))));
-  };
-  x_(r"(\x -> let y = -x in y)");
-  x_(r" \x -> let y = -x in y ");
-  x_(r" \x -> -x ");
-  error_xe(r" \x -> - "
-          ,   ExpError::Eof);
-  error_xe(r" \x -> x + "
-          ,   ExpError::Eof);
-  error_xe(r" \x -> ( x + ) "
-          ,   ExpError::Expected(Token::RParen, Token::Plus));
-  x_(r" \x -> x - x ");
-  x_(r" \x -> x-x ");
-  x_(r" \x -> x + - x ");
-  x_(r" \x -> x + -x ");
-  x_(r" \x -> x+-x ");
-  x_(r" \x -> x * x - x ");
-  x_(r" \x -> x * x -x ");
-  x_(r" \x -> x*x-x ");
-  x_(r" \x -> x * - x - x ");
-  x_(r" \x -> x * -x - x ");
-  x_(r" \x -> x*-x-x ");
-  x_(r" \x -> x * - x x ");
-  x_(r" \x -> x * -x x ");
-  x_(r" \x -> x*-x x ");
-  x_(r" \x -> x x + x ");
-  x_(r" \x -> x + x x ");
-  x_(r" \x -> x x ");
-  x_(r" \x -> x x x ");
-  x_(r" \x -> x x x x ");
-  x_(r" \x -> x (x x x) ");
-  x_(r" \x -> x (x (x x)) ");
-  x_(r" \x -> x (x (x x) (x x)) ");
-  x_(r" \x -> x (x (x (x x)) (x (x x))) ");
-  x_(r" \x -> x + x * x x ");
-  x_(r" \x -> x + x * x (x) ");
-  x_(r" \x -> x + x * x(x) ");
-  x_(r" \x -> x + x * (x)x ");
-  x_(r" \x -> x + x * (x) x ");
+  xy(r"(\x -> let y = -x in y)"
+    ,   Exp::Lam(vec!["x".into()],
+            Exp::Let("y".into(),
+                Exp::Neg(
+                    Exp::id("x").into()
+                ).into(),
+                Exp::id("y").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> let y = -x in y "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Let("y".into(),
+                Exp::Neg(
+                    Exp::id("x").into()
+                ).into(),
+                Exp::id("y").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> -x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Neg(
+                Exp::id("x").into()
+            ).into()
+        ).into()
+    );
+  xe(r" \x -> - "
+    ,   ExpError::Eof);
+  xe(r" \x -> x + "
+    ,   ExpError::Eof);
+  xe(r" \x -> ( x + ) "
+    //,   ExpError::Expected(Token::RParen, Token::Plus)
+    ,   ExpError::InvalidNud(Token::RParen));
+  xy(r" \x -> x - x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::id("x").into(),
+                Exp::id("x").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x-x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::id("x").into(),
+                Exp::id("x").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x + - x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Add(
+                Exp::id("x").into(),
+                Exp::Neg(
+                    Exp::id("x").into()
+                ).into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x + -x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Add(
+                Exp::id("x").into(),
+                Exp::Neg(
+                    Exp::id("x").into()
+                ).into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x+-x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Add(
+                Exp::id("x").into(),
+                Exp::Neg(
+                    Exp::id("x").into()
+                ).into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x * x - x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::id("x").into()
+                ).into(),
+                Exp::id("x").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x * x -x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::id("x").into()
+                ).into(),
+                Exp::id("x").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x*x-x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::id("x").into()
+                ).into(),
+                Exp::id("x").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x * - x - x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::Neg(
+                        Exp::id("x").into()
+                    ).into()
+                ).into(),
+                Exp::id("x").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x * -x - x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::Neg(
+                        Exp::id("x").into()
+                    ).into()
+                ).into(),
+                Exp::id("x").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x*-x-x "
+    ,   Exp::LamAlt(
+            vec!["x".into()],
+            Exp::Sub(
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::Neg(
+                        Exp::id("x").into()
+                    ).into(),
+                ).into(),
+                Exp::id("x").into()
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x * - x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Mul(
+                Exp::id("x").into(),
+                Exp::Neg(
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into()
+                ).into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x * -x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Mul(
+                Exp::id("x").into(),
+                Exp::Neg(
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into()
+                ).into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x*-x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Mul(
+                Exp::id("x").into(),
+                Exp::Neg(
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into()
+                ).into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x x + x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Add(
+                Exp::App(
+                    Exp::id("x").into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x + x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Add(
+                Exp::id("x").into(),
+                Exp::App(
+                    Exp::id("x").into(),
+                    Exp::id("x").into(),
+                ).into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::id("x").into(),
+                Exp::id("x").into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::id("x").into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x x x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x (x x x) "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::id("x").into(),
+                Exp::App(
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x (x (x x)) "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::id("x").into(),
+                Exp::App(
+                    Exp::id("x").into(),
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                ).into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x (x (x x) (x x)) "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::id("x").into(),
+                Exp::App(
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::App(
+                            Exp::id("x").into(),
+                            Exp::id("x").into(),
+                        ).into(),
+                    ).into(),
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                ).into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x (x (x (x x)) (x (x x))) "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::id("x").into(),
+                Exp::App(
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::App(
+                            Exp::id("x").into(),
+                            Exp::App(
+                                Exp::id("x").into(),
+                                Exp::id("x").into(),
+                            ).into(),
+                        ).into(),
+                    ).into(),
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::App(
+                            Exp::id("x").into(),
+                            Exp::id("x").into(),
+                        ).into(),
+                    ).into(),
+                ).into(),
+            ).into()
+        ).into()
+    );
+  xy(r" \x -> x - x * x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::id("x").into(),
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                ).into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> x - x * x (x) "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::id("x").into(),
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                ).into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> x - x * x(x) "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::id("x").into(),
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                ).into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> x - x * (x)x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::id("x").into(),
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                ).into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> x - x * (x) x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::id("x").into(),
+                Exp::Mul(
+                    Exp::id("x").into(),
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                ).into(),
+            ).into(),
+        ).into()
+    );
   x_(r" \x -> x + x x * x ");
   x_(r" \x -> x x + x * x ");
   x_(r" \x -> x x * x + x ");
   x_(r" \x -> x x x + x ");
   x_(r" \x -> x + x x x * x ");
   x_(r" \x -> x * x x x + x ");
-  x_(r" \x -> x + x * x - x ");
-  x_(r" \x -> x + x `add` x ");
-  x_(r" \x -> (x + x) `add` x ");
-  x_(r" \x -> x + (x `add` x) ");
-  x_(r" \x -> (\t -> t)x ");
+  xy(r" \x -> x - x * x + x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Add(
+                Exp::Sub(
+                    Exp::id("x").into(),
+                    Exp::Mul(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> x + x * x - x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Sub(
+                Exp::Add(
+                    Exp::id("x").into(),
+                    Exp::Mul(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> x + x `add` x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::InfixApp(
+                InfixOp::Add,
+                Exp::Add(
+                    Exp::id("x").into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (x + x) `add` x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::InfixApp(
+                InfixOp::Add,
+                Exp::Add(
+                    Exp::id("x").into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> x + (x `add` x) "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::Add(
+                Exp::id("x").into(),
+                Exp::InfixApp(
+                    InfixOp::Add,
+                    Exp::id("x").into(),
+                    Exp::id("x").into(),
+                ).into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (\t -> t)x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::Lam(vec!["t".into()],
+                    Exp::id("t").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> \t -> t x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::LamAlt(vec!["t".into()],
+                Exp::App(
+                    Exp::id("t").into(),
+                    Exp::id("x").into(),
+                ).into(),
+            ).into(),
+        ).into()
+    );
   x_(r" \x -> (+) x x ");
   x_(r" \x -> (+ x) x x ");
   x_(r" \x -> (+ (x)) x x ");
@@ -84,17 +517,184 @@ fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, E
   x_(r" \x -> (+ (x) x) x x ");
   x_(r" \x -> (+ x (x)) x x ");
   x_(r" \x -> (+ (x x)) x x ");
-  x_(r" \x -> (-) x x ");
-  x_(r" \x -> (- x) x x ");
-  x_(r" \x -> (-x)x x ");
-  x_(r" \x -> (- - x) x x ");
-  x_(r" \x -> (--x)x x ");
-  x_(r" \x -> (- x x) x x ");
-  x_(r" \x -> (-x x)x x ");
-  x_(r" \x -> ((-x) x)x x ");
-  x_(r" \x -> (x - x) x x ");
-  x_(r" \x -> (x-x)x x ");
-  x_(r" \x -> (x(-x))x x ");
+  xy(r" \x -> (-) x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::InfixOp(InfixOp::Sub).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (- x) x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::Neg(
+                        Exp::id("x").into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (-x)x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::Neg(
+                        Exp::id("x").into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (- - x) x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::Neg(
+                        Exp::Neg(
+                            Exp::id("x").into(),
+                        ).into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (--x)x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::Neg(
+                        Exp::Neg(
+                            Exp::id("x").into(),
+                        ).into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (- x x) x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::Neg(
+                        Exp::App(
+                            Exp::id("x").into(),
+                            Exp::id("x").into(),
+                        ).into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (-x x)x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::Neg(
+                        Exp::App(
+                            Exp::id("x").into(),
+                            Exp::id("x").into(),
+                        ).into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> ((-x) x)x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::App(
+                        Exp::Neg(
+                            Exp::id("x").into(),
+                        ).into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (x - x) x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::Sub(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (x-x)x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::Sub(
+                        Exp::id("x").into(),
+                        Exp::id("x").into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x -> (x(-x))x x "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::App(
+                        Exp::id("x").into(),
+                        Exp::Neg(
+                            Exp::id("x").into(),
+                        ).into(),
+                    ).into(),
+                    Exp::id("x").into(),
+                ).into(),
+                Exp::id("x").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x y -> x y "
+    ,   Exp::LamAlt(vec!["x".into(), "y".into()],
+            Exp::App(
+                Exp::id("x").into(),
+                Exp::id("y").into(),
+            ).into(),
+        ).into()
+    );
+  xy(r" \x y z -> x y z "
+    ,   Exp::LamAlt(vec!["x".into(), "y".into(), "z".into()],
+            Exp::App(
+                Exp::App(
+                    Exp::id("x").into(),
+                    Exp::id("y").into(),
+                ).into(),
+                Exp::id("z").into(),
+            ).into(),
+        ).into()
+    );
   xys.into_inner()
 }
 
@@ -140,9 +740,18 @@ fn testcases() {
       }
     } else if result.is_ok() {
       let r = result.unwrap();
-      if let Some(_y) = y {
+      if let Some(Err(_)) = y {
         unimplemented!();
-        //println!("    y = {:?}", y.unwrap());
+      } else if let Some(Ok(y)) = y {
+        if &r != &*y {
+          println!("MISMATCH: x = \"{}\"", x);
+          println!("          r = {:?}", r);
+          println!("          y = {:?}", y);
+        } else {
+          println!("OK: x = \"{}\"", x);
+          println!("    r = {:?}", r);
+          println!("    y = {:?}", y);
+        }
       } else {
         println!("OK: x = \"{}\"", x);
         println!("    r = {:?}", r);

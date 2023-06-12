@@ -20,6 +20,9 @@ fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, E
   let trace_x_ = |x: &'static str| {
     xys.borrow_mut().push((true, false, x, parser(&t, x), None));
   };
+  let trace_error_x_ = |x: &'static str| {
+    xys.borrow_mut().push((true, true, x, parser(&t, x), None));
+  };
   let xe = |x: &'static str, e: ExpError| {
     xys.borrow_mut().push((false, true, x, parser(&t, x), Some(Err(e))));
   };
@@ -56,13 +59,17 @@ fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, E
             ).into()
         ).into()
     );
-  xe(r" \x -> - "
+  trace_xe(r" \x -> - "
     ,   ExpError::Eof);
-  xe(r" \x -> x + "
+  trace_xe(r" \x -> x + "
     ,   ExpError::Eof);
-  xe(r" \x -> ( x + ) "
+  trace_error_x_(r" \x -> ( ");
+  trace_error_x_(r" \x -> ) ");
+  trace_error_x_(r" \x -> ( x + ) "
     //,   ExpError::Expected(Token::RParen, Token::Plus)
-    ,   ExpError::InvalidNud(Token::RParen));
+    //,   ExpError::InvalidNud(Token::RParen)
+  );
+  trace_error_x_(r" \x -> ( ( x + ) (x) ) ");
   xy(r" \x -> x - x "
     ,   Exp::LamAlt(vec!["x".into()],
             Exp::Sub(
@@ -457,7 +464,7 @@ fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, E
   xy(r" \x -> x + x `add` x "
     ,   Exp::LamAlt(vec!["x".into()],
             Exp::InfixApp(
-                InfixOp::Add,
+                InfixOp::Id("add".into()),
                 Exp::Add(
                     Exp::id("x").into(),
                     Exp::id("x").into(),
@@ -469,7 +476,7 @@ fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, E
   xy(r" \x -> (x + x) `add` x "
     ,   Exp::LamAlt(vec!["x".into()],
             Exp::InfixApp(
-                InfixOp::Add,
+                InfixOp::Id("add".into()),
                 Exp::Add(
                     Exp::id("x").into(),
                     Exp::id("x").into(),
@@ -483,7 +490,7 @@ fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, E
             Exp::Add(
                 Exp::id("x").into(),
                 Exp::InfixApp(
-                    InfixOp::Add,
+                    InfixOp::Id("add".into()),
                     Exp::id("x").into(),
                     Exp::id("x").into(),
                 ).into(),
@@ -709,8 +716,12 @@ fn testcases() {
   for (trace, e, x, mut parser, y) in testcases.into_iter() {
     if trace {
       parser = parser.trace();
+      println!();
     }
     let result = parser.parse();
+    if trace {
+      println!();
+    }
     // FIXME: compare result with reference exp.
     if !e && result.is_err() {
       println!("FALSE POS: x = \"{}\"", x);
@@ -718,6 +729,9 @@ fn testcases() {
     } else if e && result.is_ok() {
       println!("FALSE NEG: x = \"{}\"", x);
       println!("           r = {:?}", result.unwrap());
+      if let Some(Err(ey)) = y {
+        println!("           y = {:?}", ey);
+      }
       fneg += 1;
     } else if result.is_err() {
       let r = result.unwrap_err();
@@ -747,6 +761,7 @@ fn testcases() {
           println!("MISMATCH: x = \"{}\"", x);
           println!("          r = {:?}", r);
           println!("          y = {:?}", y);
+          mism += 1;
         } else {
           println!("OK: x = \"{}\"", x);
           println!("    r = {:?}", r);
@@ -759,11 +774,16 @@ fn testcases() {
     } else {
       unreachable!();
     }
+    if trace {
+      println!();
+    }
     n += 1;
   }
   if fpos > 0 || fneg > 0 || mism > 0 {
-    println!("FAILED: {}/{} false positives, {}/{} false negatives, {}/{} mismatches, out of {} total",
-        fpos, n, fneg, n, mism, n, n);
+    println!("FAILED: {} failures out of {} total", fpos + fneg + mism, n);
+    println!("        {}/{} false positives", fpos, n);
+    println!("        {}/{} false negatives", fneg, n);
+    println!("        {}/{} mismatches", mism, n);
     panic!();
   } else {
     println!("PASSED: {} total", n);

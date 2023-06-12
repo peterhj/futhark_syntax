@@ -10,6 +10,7 @@ use smol_str::{SmolStr};
 use std::cmp::{Ordering, max, min};
 use std::iter::{Peekable};
 use std::rc::{Rc};
+use std::str::{from_utf8};
 
 pub mod re;
 #[cfg(test)] pub mod tests;
@@ -97,6 +98,7 @@ pub enum Token {
   Plus,
   Dash,
   Star,
+  StarStar,
   Slash,
   DSlash,
   Percent,
@@ -107,7 +109,10 @@ pub enum Token {
   VBarBar,
   Caret,
   Bang,
+  Dollar,
   Hash,
+  Query,
+  TQuery,
   //Backtick,
   //DQuote,
   LPipe,
@@ -193,20 +198,6 @@ impl Token {
       _ => false
     }
   }
-
-  pub fn expected_ident(self, span: Span) -> Result<SmolStr, (ExpError, Span)> {
-    match self {
-      Token::Ident(name) => Ok(name),
-      s => Err((ExpError::ExpectedIdent(s), span))
-    }
-  }
-
-  pub fn expected(self, t: Token, span: Span) -> Result<(), (ExpError, Span)> {
-    if self != t {
-      return Err((ExpError::Expected(t, self), span));
-    }
-    Ok(())
-  }
 }
 
 pub fn tokenizer_trie() -> ReTrie<Token> {
@@ -232,7 +223,7 @@ pub fn tokenizer_trie() -> ReTrie<Token> {
   tr.push(r"<",         |_| Token::Lt);
   //tr.push(r"\+\+",      |_| Token::PlusPlus);
   tr.push(r"\+",        |_| Token::Plus);
-  //tr.push(r"\*\*",      |_| Token::StarStar);
+  tr.push(r"\*\*",      |_| Token::StarStar);
   tr.push(r"\*",        |_| Token::Star);
   tr.push(r"//",        |_| Token::DSlash);
   tr.push(r"/",         |_| Token::Slash);
@@ -246,6 +237,9 @@ pub fn tokenizer_trie() -> ReTrie<Token> {
   tr.push(r"\|\|",      |_| Token::VBarBar);
   tr.push(r"\|",        |_| Token::VBar);
   tr.push(r"\^",        |_| Token::Caret);
+  tr.push(r"\?\?\?",    |_| Token::TQuery);
+  tr.push(r"\?",        |_| Token::Query);
+  tr.push(r"\$",        |_| Token::Dollar);
   tr.push(r"#\[",       |_| Token::LHashBrack);
   tr.push(r"#",         |_| Token::Hash);
   tr.push(r"\(\)",      |_| Token::LRParen);
@@ -511,6 +505,39 @@ pub struct ExpParser<'t, 's> {
   depth: u32,
 }
 
+impl Token {
+  pub fn expected_ident(self, p: &mut ExpParser) -> Result<SmolStr, (ExpError, Span)> {
+    match &self {
+      &Token::Ident(_) => {
+        match self {
+          Token::Ident(name) => Ok(name),
+          _ => unreachable!()
+        }
+      }
+      _ => {
+        let span = p.current_span();
+        if p._trace2("exp", "tok") { println!("expected ident, actual={:?}", &self); }
+        if p.trace { p.depth -= 1; }
+        let s = match self {
+          Token::Ident(_) => unreachable!(),
+          s => s
+        };
+        Err((ExpError::ExpectedIdent(s), span))
+      }
+    }
+  }
+
+  pub fn expected(self, t: Token, p: &mut ExpParser) -> Result<(), (ExpError, Span)> {
+    if &self != &t {
+      let span = p.current_span();
+      if p._trace2("exp", "tok") { println!("expected={:?}, actual={:?}", &t, &self); }
+      if p.trace { p.depth -= 1; }
+      return Err((ExpError::Expected(t, self), span));
+    }
+    Ok(())
+  }
+}
+
 impl<'t, 's> ExpParser<'t, 's> {
   pub fn new(tokens: Tokenizer<'t, 's>) -> ExpParser<'t, 's> {
     let tokens = tokens.peekable();
@@ -604,7 +631,10 @@ impl<'t, 's> ExpParser<'t, 's> {
   pub fn skip_space(&mut self) -> Result<(), (ExpError, Span)> {
     match self.current() {
       Token::Space => {}
-      t => return Err((ExpError::ExpectedSpace(t), self.current_span()))
+      t => {
+        if self.trace { self.depth -= 1; }
+        return Err((ExpError::ExpectedSpace(t), self.current_span()));
+      }
     }
     loop {
       match self.peek_next() {
@@ -637,6 +667,7 @@ impl<'t, 's> ExpParser<'t, 's> {
       Token::LRCurly |
       Token::LCurly |
       Token::RCurly => {
+        if self.trace { self.depth -= 1; }
         Err((ExpError::InvalidLed(tok), span))
       }
       // TODO TODO
@@ -644,7 +675,8 @@ impl<'t, 's> ExpParser<'t, 's> {
         if self.maybe_skip_space()? {
           self.next()?;
         }
-        let rexp = self.exp(lbp)?;
+        let rexp = self.exp(lbp)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         if self.trace { self.depth -= 1; }
         Ok(Exp::Add(lexp.into(), rexp.into()))
       }
@@ -652,7 +684,8 @@ impl<'t, 's> ExpParser<'t, 's> {
         if self.maybe_skip_space()? {
           self.next()?;
         }
-        let rexp = self.exp(lbp)?;
+        let rexp = self.exp(lbp)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         if self.trace { self.depth -= 1; }
         Ok(Exp::Sub(lexp.into(), rexp.into()))
       }
@@ -660,7 +693,8 @@ impl<'t, 's> ExpParser<'t, 's> {
         if self.maybe_skip_space()? {
           self.next()?;
         }
-        let rexp = self.exp(lbp)?;
+        let rexp = self.exp(lbp)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         if self.trace { self.depth -= 1; }
         Ok(Exp::Mul(lexp.into(), rexp.into()))
       }
@@ -668,7 +702,8 @@ impl<'t, 's> ExpParser<'t, 's> {
         if self.maybe_skip_space()? {
           self.next()?;
         }
-        let rexp = self.exp(lbp)?;
+        let rexp = self.exp(lbp)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         if self.trace { self.depth -= 1; }
         Ok(Exp::Div(lexp.into(), rexp.into()))
       }
@@ -676,7 +711,8 @@ impl<'t, 's> ExpParser<'t, 's> {
         if self.maybe_skip_space()? {
           self.next()?;
         }
-        let rexp = self.exp(lbp)?;
+        let rexp = self.exp(lbp)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         if self.trace { self.depth -= 1; }
         Ok(Exp::Rem(lexp.into(), rexp.into()))
       }
@@ -684,10 +720,17 @@ impl<'t, 's> ExpParser<'t, 's> {
         unimplemented!();
       }
       Token::InfixIdent(name) => {
+        let name_bytes = name.as_str().as_bytes();
+        if name_bytes[0] != b'`' || name_bytes[name_bytes.len() - 1] != b'`' {
+          if self.trace { self.depth -= 1; }
+          return Err((ExpError::Failed(Token::InfixIdent(name)), span));
+        }
+        let name = from_utf8(&name_bytes[1 .. name_bytes.len() - 1]).unwrap().into();
         if self.maybe_skip_space()? {
           self.next()?;
         }
-        let rexp = self.exp(lbp)?;
+        let rexp = self.exp(lbp)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         if self.trace { self.depth -= 1; }
         Ok(Exp::InfixApp(InfixOp::Id(name), lexp.into(), rexp.into()))
       }
@@ -709,6 +752,7 @@ impl<'t, 's> ExpParser<'t, 's> {
       Token::RParen |
       Token::RBrack |
       Token::RCurly => {
+        if self.trace { self.depth -= 1; }
         Err((ExpError::InvalidNud(tok), span))
       }
       // TODO TODO
@@ -718,7 +762,7 @@ impl<'t, 's> ExpParser<'t, 's> {
           if self.maybe_skip_space()? {
             self.next()?;
           }
-          let var = self.current().expected_ident(self.current_span())?;
+          let var = self.current().expected_ident(self)?;
           vars.push(var);
           self.next()?;
           if self.maybe_skip_space()? {
@@ -735,7 +779,8 @@ impl<'t, 's> ExpParser<'t, 's> {
         if self.maybe_skip_space()? {
           self.next()?;
         }
-        let body = self.exp(0)?;
+        let body = self.exp(0)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         if self.trace { self.depth -= 1; }
         return Ok(Exp::LamAlt(vars, body.into()));
       }
@@ -743,7 +788,8 @@ impl<'t, 's> ExpParser<'t, 's> {
         if self.maybe_skip_space()? {
           self.next()?;
         }
-        let body = self.exp(9999)?;
+        let body = self.exp(9999)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         if self.trace { self.depth -= 1; }
         return Ok(Exp::Neg(body.into()));
       }
@@ -755,14 +801,19 @@ impl<'t, 's> ExpParser<'t, 's> {
           &Token::Backslash => {
             let (tok, span) = self.current_();
             self.next()?;
-            let (lam_vars, lam_body) = match self.exp_nud(tok, span)? {
+            let (lam_vars, lam_body) = match self.exp_nud(tok, span)
+                .map_err(|e| { if self.trace { self.depth -= 1; } e})?
+            {
               Exp::LamAlt(vars, body) => (vars, body),
-              _ => return Err((ExpError::Failed(Token::Backslash), span))
+              _ => {
+                if self.trace { self.depth -= 1; }
+                return Err((ExpError::Failed(Token::Backslash), span));
+              }
             };
             if self.maybe_skip_space()? {
               self.next()?;
             }
-            self.current().expected(Token::RParen, self.current_span())?;
+            self.current().expected(Token::RParen, self)?;
             self.next()?;
             if self.trace { self.depth -= 1; }
             return Ok(Exp::Lam(lam_vars, lam_body));
@@ -789,14 +840,19 @@ impl<'t, 's> ExpParser<'t, 's> {
               }
               _ => {}
             }
-            let neg_inner = match self.exp_nud(tok, span)? {
+            let neg_inner = match self.exp_nud(tok, span)
+                .map_err(|e| { if self.trace { self.depth -= 1; } e})?
+            {
               Exp::Neg(inner) => inner,
-              _ => return Err((ExpError::Failed(Token::Dash), span))
+              _ => {
+                if self.trace { self.depth -= 1; }
+                return Err((ExpError::Failed(Token::Dash), span));
+              }
             };
             if self.maybe_skip_space()? {
               self.next()?;
             }
-            self.current().expected(Token::RParen, self.current_span())?;
+            self.current().expected(Token::RParen, self)?;
             self.next()?;
             if self.trace { self.depth -= 1; }
             return Ok(Exp::Neg(neg_inner));
@@ -818,23 +874,25 @@ impl<'t, 's> ExpParser<'t, 's> {
             self.next()?;
             let (tok, span) = self.current_();
             //if self.trace { println!("TRACE: nud: LParen:   tok={:?} span={:?}", tok, span); }
-            let lexp = self.exp_rec_(lexp, (tok, span), 9999, /*false*/)?;
+            let lexp = self.exp_rec(lexp, (tok, span), 9999)
+                .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
             //if self.trace { println!("TRACE: nud: LParen:   return {:?}", lexp); }
             if self.maybe_skip_space()? {
               self.next()?;
             }
-            self.current().expected(Token::RParen, self.current_span())?;
+            self.current().expected(Token::RParen, self)?;
             self.next()?;
             if self.trace { self.depth -= 1; }
             return Ok(lexp);
           }
           _ => {}
         }
-        let inner = self.exp(0)?;
+        let inner = self.exp(0)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         if self.maybe_skip_space()? {
           self.next()?;
         }
-        self.current().expected(Token::RParen, self.current_span())?;
+        self.current().expected(Token::RParen, self)?;
         self.next()?;
         if self.trace { self.depth -= 1; }
         return Ok(inner);
@@ -850,7 +908,7 @@ impl<'t, 's> ExpParser<'t, 's> {
         //if self.trace { println!("TRACE: nud: Let: skip space"); }
         self.next()?;
         //if self.trace { println!("TRACE: nud: Let:   next tok={:?}", self.current_ref()); }
-        let name = self.current().expected_ident(self.current_span())?;
+        let name = self.current().expected_ident(self)?;
         //if self.trace { println!("TRACE: nud: Let: name={:?}", name); }
         self.next()?;
         //if self.trace { println!("TRACE: nud: Let:   next tok={:?}", self.current_ref()); }
@@ -858,7 +916,7 @@ impl<'t, 's> ExpParser<'t, 's> {
         //if self.trace { println!("TRACE: nud: Let: skip space"); }
         self.next()?;
         //if self.trace { println!("TRACE: nud: Let:   next tok={:?}", self.current_ref()); }
-        self.current().expected(Token::Equals, self.current_span())?;
+        self.current().expected(Token::Equals, self)?;
         //if self.trace { println!("TRACE: nud: Let: ="); }
         self.next()?;
         //if self.trace { println!("TRACE: nud: Let:   next tok={:?}", self.current_ref()); }
@@ -866,12 +924,13 @@ impl<'t, 's> ExpParser<'t, 's> {
         //if self.trace { println!("TRACE: nud: Let: skip space"); }
         self.next()?;
         //if self.trace { println!("TRACE: nud: Let:   next tok={:?}", self.current_ref()); }
-        let body = self.exp(0)?;
+        let body = self.exp(0)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         //if self.trace { println!("TRACE: nud: Let: body={:?}", body); }
         self.skip_space()?;
         //if self.trace { println!("TRACE: nud: Let: skip space"); }
         self.next()?;
-        self.current().expected(Token::In, self.current_span())?;
+        self.current().expected(Token::In, self)?;
         //if self.trace { println!("TRACE: nud: Let: in"); }
         self.next()?;
         //if self.trace { println!("TRACE: nud: Let:   next tok={:?}", self.current_ref()); }
@@ -879,7 +938,8 @@ impl<'t, 's> ExpParser<'t, 's> {
         //if self.trace { println!("TRACE: nud: Let: skip space"); }
         self.next()?;
         //if self.trace { println!("TRACE: nud: Let:   next tok={:?}", self.current_ref()); }
-        let rest = self.exp(0)?;
+        let rest = self.exp(0)
+            .map_err(|e| { if self.trace { self.depth -= 1; } e})?;
         //if self.trace { println!("TRACE: nud: Let: rest={:?}", rest); }
         if self.trace { self.depth -= 1; }
         return Ok(Exp::Let(name, body.into(), rest.into()));
@@ -926,32 +986,41 @@ impl<'t, 's> ExpParser<'t, 's> {
     }
   }
 
-  pub fn exp(&mut self, ctx: i16) -> Result<Exp, (ExpError, Span)> {
-    self.exp_(ctx, false)
-  }
-
-  pub fn exp_(&mut self, ctx: i16, only_nud: bool) -> Result<Exp, (ExpError, Span)> {
+  pub fn exp_(&mut self, ctx: i16, no_fail: bool, only_nud: bool) -> Result<Exp, (ExpError, Span)> {
     if self.trace { self.depth += 1; }
     let mut tok_span = self.current_();
-    if self._trace("exp") { println!("tok={:?} span={:?} ctx={} only_nud={:?}", tok_span.0, tok_span.1, ctx, only_nud); }
+    if self._trace("exp") { println!("enter: tok={:?} span={:?} ctx={} only_nud={:?}", tok_span.0, tok_span.1, ctx, only_nud); }
     if tok_span.0.is_eof() {
+      if self._trace("exp") { println!("fail: eof (1)"); }
+      if self.trace { self.depth -= 1; }
       return Err((ExpError::Eof, tok_span.1));
     }
     if tok_span.0.is_space() {
       self.next()?;
       tok_span = self.current_();
+      if self._trace("exp") { println!("next tok={:?} (space)", self.current_ref()); }
     }
     if tok_span.0.is_eof() {
+      if self._trace("exp") { println!("fail: eof (2)"); }
+      if self.trace { self.depth -= 1; }
       return Err((ExpError::Eof, tok_span.1));
     }
     self.next()?;
     if self._trace("exp") { println!("next tok={:?}", self.current_ref()); }
-    let lexp = self.exp_nud(tok_span.0, tok_span.1)?;
+    let lexp = match self.exp_nud(tok_span.0, tok_span.1) {
+      Err(e) => {
+        if self._trace("exp") { println!("nud fail: {:?}", e); }
+        if self.trace { self.depth -= 1; }
+        return Err(e);
+      }
+      Ok(exp) => exp
+    };
     if self._trace("exp") { println!("lexp={:?} (nud)", lexp); }
     tok_span = self.current_();
     if self._trace("exp") { println!("tok={:?} span={:?}", tok_span.0, tok_span.1); }
     if tok_span.0.is_eof() {
       if self._trace("exp") { println!("return {:?}", lexp); }
+      if self.trace { self.depth -= 1; }
       return Ok(lexp);
     }
     /*while ctx < self.lbp(&tok_span.0) {
@@ -963,16 +1032,23 @@ impl<'t, 's> ExpParser<'t, 's> {
       }
     }*/
     if !only_nud {
-      return self.exp_rec_(lexp, tok_span, ctx, /*only_nud*/);
+      if self._trace("exp") { println!("try rec..."); }
+      let result = self.exp_rec_(lexp, tok_span, ctx, no_fail);
+      if self._trace("exp") { println!("rec result={:?}", &result); }
+      if self.trace { self.depth -= 1; }
+      return result;
     }
-    if self._trace("exp") { println!("return {:?}", lexp); }
+    if self._trace("exp") { println!("return {:?} (only nud)", lexp); }
     if self.trace { self.depth -= 1; }
     Ok(lexp)
   }
 
-  pub fn exp_rec_(&mut self, mut lexp: Exp, mut tok_span: (Token, Span), ctx: i16, /*non_rec: bool*/) -> Result<Exp, (ExpError, Span)> {
+  pub fn exp_rec_(&mut self, mut lexp: Exp, mut tok_span: (Token, Span), ctx: i16, no_fail: bool) -> Result<Exp, (ExpError, Span)> {
     if self.trace { self.depth += 1; }
-    if self._trace2("exp", "rec") { println!("lexp={:?} tok={:?} span={:?} ctx={}", &lexp, &tok_span.0, &tok_span.1, ctx); }
+    if self._trace2("exp", "rec") { println!("enter: lexp={:?} tok={:?} span={:?} ctx={}", &lexp, &tok_span.0, &tok_span.1, ctx); }
+    if no_fail {
+      if self._trace2("exp", "rec") { println!("no_fail"); }
+    }
     loop {
       let mut lbp = self.lbp(&tok_span.0);
       if self._trace2("exp", "rec") { println!("tok={:?}", &tok_span.0); }
@@ -1010,7 +1086,7 @@ impl<'t, 's> ExpParser<'t, 's> {
       let mut err_rec = None;
       let mut fail_led = false;
       if !only_rec && ctx < lbp {
-        if self._trace2("exp", "rec") { println!("led: ctx={} < lbp={}", ctx, lbp); }
+        if self._trace2("exp", "rec") { println!("led: try: lexp={:?} ctx={} < lbp={}", &lexp, ctx, lbp); }
         let mut parser = self.clone();
         if prespace {
           parser.next()?;
@@ -1020,7 +1096,6 @@ impl<'t, 's> ExpParser<'t, 's> {
         if self._trace2("exp", "rec") { println!("led: next tok={:?}", self.current_ref()); }
         match parser.exp_led(lexp.clone(), tok_span.0.clone(), tok_span.1, /*prespace*/) {
           Err(e) => {
-            //if self._trace2("exp", "rec") { println!("led: failed tok={:?} only_led={:?} non_rec={:?}", &tok_span.0, only_led, non_rec); }
             if self._trace2("exp", "rec") { println!("led: failed tok={:?} only_led={:?}: {:?}", &tok_span.0, only_led, e); }
             err_led = Some(e);
             fail_led = true;
@@ -1041,7 +1116,7 @@ impl<'t, 's> ExpParser<'t, 's> {
         }
       }
       if !only_led && (fail_led || ctx >= lbp) {
-        if self._trace2("exp", "rec") { println!("backtrack: enter... fail_led={:?} ctx={} lbp={}", fail_led, ctx, lbp); }
+        if self._trace2("exp", "rec") { println!("backtrack: try: lexp={:?} fail_led={:?} ctx={} lbp={}", &lexp, fail_led, ctx, lbp); }
         let mut parser = self.clone();
         if self._trace2("exp", "rec") { println!("backtrack: tok={:?}", &tok_span.0); }
         if self._trace2("exp", "rec") { println!("backtrack: prespace?{:?}", prespace); }
@@ -1051,7 +1126,7 @@ impl<'t, 's> ExpParser<'t, 's> {
           parser.next()?;
           if self._trace2("exp", "rec") { println!("backtrack: next tok={:?} (prespace)", parser.current_ref()); }
         }
-        match parser.exp_(9999, true) {
+        match parser.exp_(9999, false, true) {
           Err(e) => {
             if self._trace2("exp", "rec") { println!("backtrack: failed: {:?}", e); }
             err_rec = Some(e);
@@ -1082,18 +1157,13 @@ impl<'t, 's> ExpParser<'t, 's> {
             if self._trace2("exp", "rec") { println!("err rec={:?}", e); }
           }
         }
-        if /*(err_led.as_ref()
-             .map(|&(ref e, _)| e.is_eof())
-             .unwrap_or(false)
-            && err_rec.is_some())
-        || */(err_led.as_ref()
-             .map(|&(ref e, _)| e.is_eof() || e.is_invalid())
-             .unwrap_or(false)
-            && err_rec.as_ref()
-             .map(|&(ref e, _)| e.is_invalid())
-             .unwrap_or(false))
+        if no_fail &&
+           ((!only_rec && err_led.is_some()) ||
+            (!only_led && err_rec.is_some()))
         {
-          return Err(err_led.unwrap());
+          if self._trace2("exp", "rec") { println!("fail"); }
+          if self.trace { self.depth -= 1; }
+          return Err(err_led.or(err_rec).unwrap());
         }
         break;
       }
@@ -1101,6 +1171,18 @@ impl<'t, 's> ExpParser<'t, 's> {
     if self._trace2("exp", "rec") { println!("return {:?}", lexp); }
     if self.trace { self.depth -= 1; }
     Ok(lexp)
+  }
+
+  pub fn exp_rec(&mut self, lexp: Exp, tok_span: (Token, Span), ctx: i16) -> Result<Exp, (ExpError, Span)> {
+    self.exp_rec_(lexp, tok_span, ctx, false)
+  }
+
+  pub fn exp(&mut self, ctx: i16) -> Result<Exp, (ExpError, Span)> {
+    self.exp_(ctx, false, false)
+  }
+
+  pub fn root_exp(&mut self, ctx: i16) -> Result<Exp, (ExpError, Span)> {
+    self.exp_(ctx, true, false)
   }
 
   pub fn _trace2(&self, prefix: &str, suffix: &str) -> bool {
@@ -1133,6 +1215,6 @@ impl<'t, 's> ExpParser<'t, 's> {
 
   pub fn parse(mut self) -> Result<Exp, (ExpError, Span)> {
     self.next()?;
-    self.exp(0)
+    self.root_exp(0)
   }
 }

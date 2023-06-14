@@ -59,17 +59,45 @@ fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, E
             ).into()
         ).into()
     );
-  trace_xe(r" \x -> - "
+  xe(r" \x -> ( "
     ,   ExpError::Eof);
-  trace_xe(r" \x -> x + "
+  xe(r" \x -> ) "
+    ,   ExpError::InvalidNud(Token::RParen)
+  );
+  xe(r" \x -> - "
     ,   ExpError::Eof);
-  trace_error_x_(r" \x -> ( ");
-  trace_error_x_(r" \x -> ) ");
-  trace_error_x_(r" \x -> ( x + ) "
+  xe(r" \x -> + "
+    ,   ExpError::InvalidNud(Token::Plus)
+  );
+  error_x_(r" \x -> + x ");
+  error_x_(r" \x -> + x ) ");
+  x_(r" \x -> ( + ) ");
+  x_(r" \x -> ( + x ) ");
+  error_x_(r" \x -> ( + ");
+  error_x_(r" \x -> ( + x ");
+  xe(r" \x -> x + "
+    ,   ExpError::Eof);
+  xy(r" \x -> ( x + ) "
     //,   ExpError::Expected(Token::RParen, Token::Plus)
     //,   ExpError::InvalidNud(Token::RParen)
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::InfixPartR(
+                Exp::id("x").into(),
+                InfixOp::Add,
+            ).into()
+        ).into()
   );
-  trace_error_x_(r" \x -> ( ( x + ) (x) ) ");
+  xy(r" \x -> ( ( x + ) (x) ) "
+    ,   Exp::LamAlt(vec!["x".into()],
+            Exp::App(
+                Exp::InfixPartR(
+                    Exp::id("x").into(),
+                    InfixOp::Add,
+                ).into(),
+                Exp::id("x").into(),
+            ).into()
+        ).into()
+  );
   xy(r" \x -> x - x "
     ,   Exp::LamAlt(vec!["x".into()],
             Exp::Sub(

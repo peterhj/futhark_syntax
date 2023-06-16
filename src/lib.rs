@@ -3,10 +3,9 @@ extern crate smol_str;
 
 use crate::re::{ReTrie};
 
-//use regex_syntax::{Parser as ReParser};
-//use regex_syntax::hir::{Hir as ReExp};
 use smol_str::{SmolStr};
 
+use std::borrow::{Cow};
 use std::cmp::{Ordering, max, min};
 use std::iter::{Peekable};
 use std::rc::{Rc};
@@ -313,22 +312,23 @@ pub fn tokenizer_trie() -> ReTrie<Token> {
 }
 
 #[derive(Clone)]
-pub struct Tokenizer<'t, 's> {
-  trie: &'t ReTrie<Token>,
-  source: &'s str,
-  off: usize,
-  pos: Pos,
-  eof: bool,
+pub struct Tokenizer<'s> {
+  trie: Rc<ReTrie<Token>>,
+  src:  Cow<'s, str>,
+  off:  usize,
+  pos:  Pos,
+  eof:  bool,
   peek: Option<(Token, usize)>,
 }
 
-impl<'t, 's> Tokenizer<'t, 's> {
-  pub fn new(trie: &'t ReTrie<Token>, source: &'s str) -> Tokenizer<'t, 's> {
-    Tokenizer{trie, source, off: 0, pos: Pos{line: 0, col: 0}, eof: false, peek: None}
+impl<'s> Tokenizer<'s> {
+  pub fn new<S: Into<Cow<'s, str>>>(trie: Rc<ReTrie<Token>>, src: S) -> Tokenizer<'s> {
+    let src = src.into();
+    Tokenizer{trie, src, off: 0, pos: Pos{line: 0, col: 0}, eof: false, peek: None}
   }
 }
 
-impl<'t, 's> Iterator for Tokenizer<'t, 's> {
+impl<'s> Iterator for Tokenizer<'s> {
   type Item = (Token, Span);
 
   fn next(&mut self) -> Option<(Token, Span)> {
@@ -345,7 +345,7 @@ impl<'t, 's> Iterator for Tokenizer<'t, 's> {
       return Some((Token::_Eof, Span::point(self.pos)));
     }
     let start = self.pos;
-    let mut tok = match self.trie.match_at(self.source, self.off) {
+    let mut tok = match self.trie.match_at(self.src.as_ref(), self.off) {
       None => {
         self.eof = true;
         return Some((Token::_Eof, Span::point(self.pos)));
@@ -361,7 +361,7 @@ impl<'t, 's> Iterator for Tokenizer<'t, 's> {
     if tok.is_space() {
       tok = Token::Space;
       loop {
-        match self.trie.match_at(self.source, self.off) {
+        match self.trie.match_at(self.src.as_ref(), self.off) {
           None => {
             self.eof = true;
             break;
@@ -383,6 +383,9 @@ impl<'t, 's> Iterator for Tokenizer<'t, 's> {
     Some((tok, Span{start, end}))
   }
 }
+
+pub type ExpRet = Result<Exp, (ExpError, Span)>;
+//pub type ExpRet = Result<(Exp, Span), (ExpError, Span)>;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ExpError {
@@ -513,8 +516,8 @@ impl Exp {
 }
 
 #[derive(Clone)]
-pub struct ExpParser<'t, 's> {
-  tokens: Peekable<Tokenizer<'t, 's>>,
+pub struct ExpParser<'s> {
+  tokens: Peekable<Tokenizer<'s>>,
   cur: Option<(Token, Span)>,
   trace: bool,
   depth: u32,
@@ -553,8 +556,8 @@ impl Token {
   }
 }
 
-impl<'t, 's> ExpParser<'t, 's> {
-  pub fn new(tokens: Tokenizer<'t, 's>) -> ExpParser<'t, 's> {
+impl<'s> ExpParser<'s> {
+  pub fn new(tokens: Tokenizer<'s>) -> ExpParser<'s> {
     let tokens = tokens.peekable();
     ExpParser{tokens, cur: None, trace: false, depth: 0}
   }
@@ -1323,7 +1326,7 @@ impl<'t, 's> ExpParser<'t, 's> {
     self.trace
   }
 
-  pub fn trace(mut self) -> ExpParser<'t, 's> {
+  pub fn trace(mut self) -> ExpParser<'s> {
     self.trace = true;
     self.depth = 0;
     self

@@ -1,4 +1,4 @@
-CARGO := cargo --offline
+CARGO := cargo
 
 .PHONY: all test
 

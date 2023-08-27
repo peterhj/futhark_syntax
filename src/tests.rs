@@ -3,14 +3,15 @@ use super::tokenizing::*;
 use super::parsing::*;
 
 use std::cell::{RefCell};
+use std::rc::{Rc};
 
-fn parser<'t>(t: &'t ReTrie<Token>, x: &'static str) -> ExpParser<'t, 'static> {
-  let tokens = Tokenizer::new(t, x);
+fn parser(t: &Rc<ReTrie<Token>>, x: &'static str) -> ExpParser<'static> {
+  let tokens = Tokenizer::new(t.clone(), x);
   ExpParser::new(tokens)
 }
 
 #[allow(unused_variables)]
-fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, ExpParser<'t, 'static>, Option<Result<ExpRef, ExpError>>)> {
+fn build_testcases(t: &Rc<ReTrie<Token>>) -> Vec<(bool, bool, &'static str, ExpParser<'static>, Option<Result<ExpRef, ExpError>>)> {
   let xys = RefCell::new(Vec::new());
   let x_ = |x: &'static str| {
     xys.borrow_mut().push((false, false, x, parser(&t, x), None));
@@ -736,7 +737,7 @@ fn build_testcases<'t>(t: &'t ReTrie<Token>) -> Vec<(bool, bool, &'static str, E
 
 #[test]
 fn testcases() {
-  let trie = tokenizer_trie();
+  let trie = tokenizer_trie().into();
   let testcases = build_testcases(&trie);
   let mut n = 0;
   let mut fpos = 0;

@@ -4,6 +4,25 @@ use regex_syntax::hir::{HirKind as ReExpKind, Hir as ReExp, Class as ReClass};
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::{from_utf8};
 
+// `len_utf8` below is from rust libcore (Apache-2.0/MIT).
+
+pub const MAX_ONE_B: u32 = 0x80;
+pub const MAX_TWO_B: u32 = 0x800;
+pub const MAX_THREE_B: u32 = 0x10000;
+
+#[inline]
+pub fn len_utf8(code: u32) -> usize {
+  if code < MAX_ONE_B {
+    1
+  } else if code < MAX_TWO_B {
+    2
+  } else if code < MAX_THREE_B {
+    3
+  } else {
+    4
+  }
+}
+
 pub struct ReMultiMapValues<'a, K, V> {
   x:    Option<V>,
   k:    K,
@@ -87,9 +106,8 @@ impl<T> Default for ReTrie<T> {
 }
 
 impl<T> ReTrie<T> {
-  //pub fn push<F: 'static + Fn(&str) -> T>(&mut self, rexp: ReExp, map_fun: F) {}
-  //pub fn push<'s, F: 'static + Fn(&str) -> T>(&mut self, rexp: (&'s str, ReExp), map_fun: F) {}
   pub fn push<'s, F: 'static + Fn(&str) -> T>(&mut self, rstr: &'s str, map_fun: F) {
+    // FIXME: is it worth reusing a cached regexp parser?
     let rexp = match ReParser::new().parse(rstr) {
       Err(_) => panic!("bug: ReTrie::push: regexp parse failure: '{}'", rstr),
       Ok(rexp) => rexp
@@ -117,7 +135,7 @@ impl<T> ReTrie<T> {
   }
 
   pub fn split_match<'t>(&self, text: &'t str) -> Option<(T, &'t str)> {
-    let (mat_len, ridx) = self.inner._match(text, None, /*0*/)?;
+    let (mat_len, ridx) = self.inner._match(text, None)?;
     let (tok, rem) = text.split_at(mat_len);
     Some((self.map_funs[ridx](tok), rem))
   }
@@ -128,7 +146,7 @@ impl<T> ReTrie<T> {
       Some(s) => s
     };
     //println!("TRACE: re: match_at: pos={} search={}", pos, search);
-    let (mat_len, ridx) = self.inner._match(search, None, /*0*/)?;
+    let (mat_len, ridx) = self.inner._match(search, None)?;
     //println!("TRACE: re: match_at:   ridx={} mat.len={}", ridx, mat_len);
     let (tok, _) = search.split_at(mat_len);
     Some((self.map_funs[ridx](tok), pos + mat_len))
@@ -168,20 +186,7 @@ impl ReInnerTrie {
     }
     match rexp.kind() {
       &ReExpKind::Literal(ref re_lit) => {
-        /*let c = match re_lit {
-          &ReLiteral::Unicode(c) => c,
-          &ReLiteral::Byte(x) => if x.is_ascii() {
-            char::from(x)
-          } else {
-            panic!("bug: re: non-ascii u8 to char: {:x}", x)
-          }
-        };*/
         let lit_str = from_utf8(&*(re_lit.0)).unwrap();
-        /*if ridx < 3 {
-          println!("DEBUG: re: _push: Literal: ridx={} rexps.len={}", ridx, rexps.len());
-        } else {
-          println!("DEBUG: re: _push: Literal: ridx={} rexps.len={} str={}", ridx, rexps.len(), lit_str);
-        }*/
         let mut lit_chars = lit_str.chars();
         let c = match lit_chars.next() {
           None => panic!("bug"),
@@ -252,28 +257,17 @@ impl ReInnerTrie {
         };
         match re_rep.sub.kind() {
           &ReExpKind::Literal(ref re_lit) => {
+            let lit_str = from_utf8(&*(re_lit.0)).unwrap();
+            let mut lit_chars = lit_str.chars();
+            let c = match lit_chars.next() {
+              None => panic!("bug"),
+              Some(c) => c
+            };
             let eidx = self.non_lit.len();
             if zero {
               self.zero.insert(eidx);
-            } else {
-              //self.repeat1.insert(eidx);
             }
             let mut ranges = Vec::new();
-            /*let c = match re_lit {
-              &ReLiteral::Unicode(c) => c,
-              _ => unimplemented!()
-            };*/
-            // FIXME FIXME
-            let c = if (re_lit.0).len() == 1 {
-              let x = (re_lit.0)[0];
-              if x.is_ascii() {
-                char::from(x)
-              } else {
-                panic!("bug: re: non-ascii u8 to char: {:x}", x)
-              }
-            } else {
-              unimplemented!();
-            };
             if unbound {
               self.unbound.insert((c, c), eidx);
             } else {
@@ -299,8 +293,6 @@ impl ReInnerTrie {
               let eidx = self.non_lit.len();
               if zero {
                 self.zero.insert(eidx);
-              } else {
-                //self.repeat1.insert(eidx);
               }
               let mut ranges = Vec::new();
               for range in klass.ranges() {
@@ -345,7 +337,6 @@ impl ReInnerTrie {
       },
       _ => {}
     }
-    //let top_ctx = ctx;
     let ctx = ctx.or(self.index);
     let mut chars = text.char_indices();
     let c = match chars.next() {
@@ -370,7 +361,7 @@ impl ReInnerTrie {
                 break;
               }
             }
-            &ReInnerTrieRef::Trie(ref trie) => match trie._match(text, ctx, /*depth + 1*/) {
+            &ReInnerTrieRef::Trie(ref trie) => match trie._match(text, ctx) {
               None => {
                 //println!("TRACE: re:   empty: no trie match");
               }
@@ -399,6 +390,7 @@ impl ReInnerTrie {
         c
       }
     };
+    let c_len = len_utf8(c as _);
     let next_pos = match chars.next() {
       None => text.len(),
       Some((pos, _)) => pos
@@ -431,7 +423,7 @@ impl ReInnerTrie {
             break;
           }
         }
-        &ReInnerTrieRef::Trie(ref trie) => match trie._match(text, ctx, /*depth + 1*/) {
+        &ReInnerTrieRef::Trie(ref trie) => match trie._match(text, ctx) {
           None => {
             //println!("TRACE: re:   repeat0: no trie/term match");
           }
@@ -476,38 +468,38 @@ impl ReInnerTrie {
       match (ctx, mat) {
         (None, None) => {
           //println!("TRACE: re:   literal: terminal N N ({})", ridx);
-          mat = Some((1, ridx));
+          mat = Some((c_len, ridx));
         }
-        (None, Some((old_len, old_idx))) => if old_len < 1
-            || old_len == 1 && ridx < old_idx {
+        (None, Some((old_len, old_idx))) => if old_len < c_len
+            || old_len == c_len && ridx < old_idx {
           //println!("TRACE: re:   literal: terminal N S ({})", ridx);
-          mat = Some((1, ridx));
+          mat = Some((c_len, ridx));
         }
         (Some(ctx), _) => if ctx == ridx {
           //println!("TRACE: re:   literal: terminal S _ ({})", ridx);
-          mat = Some((1, ridx));
+          mat = Some((c_len, ridx));
           return mat;
         }
       }
     }
     if let Some(trie) = self.literal.get(&c) {
-      match trie._match(suffix, ctx, /*depth + 1*/) {
+      match trie._match(suffix, ctx) {
         None => {
           //println!("TRACE: re:   literal: no trie match");
         }
         Some((suffix_len, ridx)) => match (ctx, mat) {
           (None, None) => {
             //println!("TRACE: re:   literal: trie N N ({})", ridx);
-            mat = Some((1 + suffix_len, ridx));
+            mat = Some((c_len + suffix_len, ridx));
           }
-          (None, Some((old_len, old_idx))) => if old_len < 1 + suffix_len
-              || old_len == 1 + suffix_len && ridx < old_idx {
+          (None, Some((old_len, old_idx))) => if old_len < c_len + suffix_len
+              || old_len == c_len + suffix_len && ridx < old_idx {
             //println!("TRACE: re:   literal: trie N S ({})", ridx);
-            mat = Some((1 + suffix_len, ridx));
+            mat = Some((c_len + suffix_len, ridx));
           }
           (Some(ctx), _) => if ctx == ridx {
             //println!("TRACE: re:   literal: trie S _ ({})", ridx);
-            mat = Some((1 + suffix_len, ridx));
+            mat = Some((c_len + suffix_len, ridx));
             return mat;
           }
         }
@@ -524,36 +516,36 @@ impl ReInnerTrie {
           &ReInnerTrieRef::Terminal(ridx) => match (ctx, mat) {
             (None, None) => {
               //println!("TRACE: re:   klass: terminal N N");
-              mat = Some((1, ridx));
+              mat = Some((c_len, ridx));
             }
-            (None, Some((old_len, old_idx))) => if old_len < 1
-                || old_len == 1 && ridx < old_idx {
+            (None, Some((old_len, old_idx))) => if old_len < c_len
+                || old_len == c_len && ridx < old_idx {
               //println!("TRACE: re:   klass: terminal N S");
-              mat = Some((1, ridx));
+              mat = Some((c_len, ridx));
             }
             (Some(ctx), _) => if ctx == ridx {
               //println!("TRACE: re:   klass: terminal S _");
-              mat = Some((1, ridx));
+              mat = Some((c_len, ridx));
               return mat;
             }
           }
-          &ReInnerTrieRef::Trie(ref trie) => match trie._match(suffix, ctx, /*depth + 1*/) {
+          &ReInnerTrieRef::Trie(ref trie) => match trie._match(suffix, ctx) {
             None => {
               //println!("TRACE: re:   klass: no trie match");
             }
             Some((suffix_len, ridx)) => match (ctx, mat) {
               (None, None) => {
                 //println!("TRACE: re:   klass: trie N N");
-                mat = Some((1 + suffix_len, ridx));
+                mat = Some((c_len + suffix_len, ridx));
               }
-              (None, Some((old_len, old_idx))) => if old_len < 1 + suffix_len
-                  || old_len == 1 + suffix_len && ridx < old_idx {
+              (None, Some((old_len, old_idx))) => if old_len < c_len + suffix_len
+                  || old_len == c_len + suffix_len && ridx < old_idx {
                 //println!("TRACE: re:   klass: trie N S");
-                mat = Some((1 + suffix_len, ridx));
+                mat = Some((c_len + suffix_len, ridx));
               }
               (Some(ctx), _) => if ctx == ridx {
                 //println!("TRACE: re:   klass: trie S _");
-                mat = Some((1 + suffix_len, ridx));
+                mat = Some((c_len + suffix_len, ridx));
                 return mat;
               }
             }
@@ -572,36 +564,36 @@ impl ReInnerTrie {
           &ReInnerTrieRef::Terminal(ridx) => match (ctx, mat) {
             (None, None) => {
               //println!("TRACE: re:   bound1: terminal N N");
-              mat = Some((1, ridx));
+              mat = Some((c_len, ridx));
             }
-            (None, Some((old_len, old_idx))) => if old_len < 1
-                || old_len == 1 && ridx < old_idx {
+            (None, Some((old_len, old_idx))) => if old_len < c_len
+                || old_len == c_len && ridx < old_idx {
               //println!("TRACE: re:   bound1: terminal N S");
-              mat = Some((1, ridx));
+              mat = Some((c_len, ridx));
             }
             (Some(ctx), _) => if ctx == ridx {
               //println!("TRACE: re:   bound1: terminal S _");
-              mat = Some((1, ridx));
+              mat = Some((c_len, ridx));
               return mat;
             }
           }
-          &ReInnerTrieRef::Trie(ref trie) => match trie._match(suffix, ctx, /*depth + 1*/) {
+          &ReInnerTrieRef::Trie(ref trie) => match trie._match(suffix, ctx) {
             None => {
               //println!("TRACE: re:   bound1: no trie match");
             }
             Some((suffix_len, ridx)) => match (ctx, mat) {
               (None, None) => {
                 //println!("TRACE: re:   bound1: trie N N");
-                mat = Some((1 + suffix_len, ridx));
+                mat = Some((c_len + suffix_len, ridx));
               }
-              (None, Some((old_len, old_idx))) => if old_len < 1 + suffix_len
-                  || old_len == 1 + suffix_len && ridx < old_idx {
+              (None, Some((old_len, old_idx))) => if old_len < c_len + suffix_len
+                  || old_len == c_len + suffix_len && ridx < old_idx {
                 //println!("TRACE: re:   bound1: trie N S");
-                mat = Some((1 + suffix_len, ridx));
+                mat = Some((c_len + suffix_len, ridx));
               }
               (Some(ctx), _) => if ctx == ridx {
                 //println!("TRACE: re:   bound1: trie S _");
-                mat = Some((1 + suffix_len, ridx));
+                mat = Some((c_len + suffix_len, ridx));
                 return mat;
               }
             }
@@ -616,7 +608,7 @@ impl ReInnerTrie {
         break;
       }
       for eidx in self.unbound.values((lb, ub)) {
-        let mut rep_ct = 1;
+        let mut rep_len = c_len;
         let mut suffix = suffix;
         loop {
           let mut chars = suffix.char_indices();
@@ -627,6 +619,7 @@ impl ReInnerTrie {
               c
             }
           };
+          let c_len = len_utf8(c as _);
           let mut more = false;
           for &(lb, ub) in self.ranges.get(&eidx).unwrap().iter() {
             if lb <= c && c <= ub {
@@ -637,7 +630,7 @@ impl ReInnerTrie {
           if !more {
             break;
           }
-          rep_ct += 1;
+          rep_len += c_len;
           suffix = match chars.next() {
             None => &suffix[suffix.len() .. ],
             Some((p, _)) => match suffix.get(p .. ) {
@@ -650,36 +643,36 @@ impl ReInnerTrie {
           &ReInnerTrieRef::Terminal(ridx) => match (ctx, mat) {
             (None, None) => {
               //println!("TRACE: re:   repeat: terminal N N");
-              mat = Some((rep_ct, ridx));
+              mat = Some((rep_len, ridx));
             }
-            (None, Some((old_len, old_idx))) => if old_len < rep_ct
-                || old_len == rep_ct && ridx < old_idx {
+            (None, Some((old_len, old_idx))) => if old_len < rep_len
+                || old_len == rep_len && ridx < old_idx {
               //println!("TRACE: re:   repeat: terminal N S");
-              mat = Some((rep_ct, ridx));
+              mat = Some((rep_len, ridx));
             }
             (Some(ctx), _) => if ctx == ridx {
               //println!("TRACE: re:   repeat: terminal S _");
-              mat = Some((rep_ct, ridx));
+              mat = Some((rep_len, ridx));
               return mat;
             }
           }
-          &ReInnerTrieRef::Trie(ref trie) => match trie._match(suffix, ctx, /*depth + 1*/) {
+          &ReInnerTrieRef::Trie(ref trie) => match trie._match(suffix, ctx) {
             None => {
               //println!("TRACE: re:   repeat: no trie match");
             }
             Some((suffix_len, ridx)) => match (ctx, mat) {
               (None, None) => {
                 //println!("TRACE: re:   repeat: trie N N");
-                mat = Some((rep_ct + suffix_len, ridx));
+                mat = Some((rep_len + suffix_len, ridx));
               }
-              (None, Some((old_len, old_idx))) => if old_len < rep_ct + suffix_len
-                  || old_len == rep_ct + suffix_len && ridx < old_idx {
+              (None, Some((old_len, old_idx))) => if old_len < rep_len + suffix_len
+                  || old_len == rep_len + suffix_len && ridx < old_idx {
                 //println!("TRACE: re:   repeat: trie N S");
-                mat = Some((rep_ct + suffix_len, ridx));
+                mat = Some((rep_len + suffix_len, ridx));
               }
               (Some(ctx), _) => if ctx == ridx {
                 //println!("TRACE: re:   repeat: trie S _");
-                mat = Some((rep_ct + suffix_len, ridx));
+                mat = Some((rep_len + suffix_len, ridx));
                 return mat;
               }
             }

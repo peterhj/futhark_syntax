@@ -181,7 +181,9 @@ impl Token {
 impl<'s> ExpParser<'s> {
   pub fn new(tokens: Tokenizer<'s>) -> ExpParser<'s> {
     let tokens = tokens.peekable();
-    ExpParser{tokens, cur: None, trace: false, depth: 0}
+    let mut this = ExpParser{tokens, cur: None, trace: false, depth: 0};
+    this.next().unwrap();
+    this
   }
 
   pub fn next(&mut self) -> Result<(), (ExpError, Span)> {
@@ -222,33 +224,6 @@ impl<'s> ExpParser<'s> {
     self.cur.as_ref().unwrap().clone()
   }
 
-  pub fn lbp(&self, tok: &Token) -> i16 {
-    match tok {
-      &Token::InfixIdent(_) => 500,
-      &Token::VBarBar => 510,
-      &Token::AmpAmp => 520,
-      &Token::EqEq |
-      &Token::Neq |
-      &Token::Gt |
-      &Token::GtEq |
-      &Token::Lt |
-      &Token::LtEq => 525,
-      &Token::Amp |
-      &Token::VBar |
-      &Token::Caret => 530,
-      &Token::GtGt |
-      &Token::LtLt => 540,
-      &Token::Plus |
-      &Token::Dash => 550,
-      &Token::Star |
-      &Token::Slash |
-      &Token::Percent => 575,
-      &Token::LBrack => 900,
-      &Token::Space => 9999,
-      _ => 0
-    }
-  }
-
   pub fn maybe_skip_space(&mut self) -> Result<bool, (ExpError, Span)> {
     match self.current_ref() {
       &Token::Space => {
@@ -283,6 +258,33 @@ impl<'s> ExpParser<'s> {
         }
         _ => return Ok(())
       }
+    }
+  }
+
+  pub fn lbp(&self, tok: &Token) -> i16 {
+    match tok {
+      &Token::InfixIdent(_) => 500,
+      &Token::VBarBar => 510,
+      &Token::AmpAmp => 520,
+      &Token::EqEq |
+      &Token::Neq |
+      &Token::Gt |
+      &Token::GtEq |
+      &Token::Lt |
+      &Token::LtEq => 525,
+      &Token::Amp |
+      &Token::VBar |
+      &Token::Caret => 530,
+      &Token::GtGt |
+      &Token::LtLt => 540,
+      &Token::Plus |
+      &Token::Dash => 550,
+      &Token::Star |
+      &Token::Slash |
+      &Token::Percent => 575,
+      &Token::LBrack => 900,
+      &Token::Space => 9999,
+      _ => 0
     }
   }
 
@@ -896,7 +898,6 @@ impl<'s> ExpParser<'s> {
   }
 
   pub fn parse(mut self) -> Result<Exp, (ExpError, Span)> {
-    self.next()?;
     self.root_exp(0)
   }
 }

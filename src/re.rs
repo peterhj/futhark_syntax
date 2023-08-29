@@ -457,7 +457,6 @@ impl ReInnerTrie {
             (Some(ctx), _) => if ctx == ridx {
               //println!("TRACE: re:   repeat0: trie S _");
               mat = Some((text_len, ridx));
-              //return mat;
               break;
             }
           }

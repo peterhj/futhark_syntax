@@ -23,3 +23,9 @@ those matches of the same rule.
 The expression parser (`ExpParser`) is based on [Pratt parsing](https://web.archive.org/web/20071012224713/http://javascript.crockford.com/tdop/tdop.html),
 extended with limited depth search and backtracking to parse
 left-associative function application via juxtaposition.
+
+## Tests
+
+`make` or `make test` runs the tests (implemented in src/tests.rs).
+Currently, there are only < 100 test cases defined for a subset of
+Futhark expressions.
